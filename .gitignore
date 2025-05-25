@@ -1,0 +1,10 @@
+*.gif
+*.mp4
+.vscode
+cpu_sim
+cpp/build
+*.h5
+cpp/results
+__pycache__/
+*.py[cod]
+*$py.class

@@ -1,0 +1,388 @@
+#include <iostream>
+#include <vector>
+#include <cmath>
+#include <random>
+#include <chrono>
+#include <iomanip>
+#include <fstream>
+#include <string>
+#include "H5Cpp.h"
+#include <sstream>
+#include <filesystem>
+#include <cuda_runtime.h>
+#include <device_launch_parameters.h>
+
+namespace fs = std::filesystem;
+using namespace H5;
+using namespace std;
+
+constexpr double G = 6.67430e-11;
+
+struct Vec3 {
+    double x, y, z;
+    __host__ __device__ Vec3() : x(0), y(0), z(0) {}
+    __host__ __device__ Vec3(double _x, double _y, double _z) : x(_x), y(_y), z(_z) {}
+
+    __host__ __device__ Vec3 operator+(const Vec3& o) const { return Vec3(x + o.x, y + o.y, z + o.z); }
+    __host__ __device__ Vec3 operator-(const Vec3& o) const { return Vec3(x - o.x, y - o.y, z - o.z); }
+    __host__ __device__ Vec3 operator*(double s) const { return Vec3(x * s, y * s, z * s); }
+    __host__ __device__ Vec3 operator/(double s) const { return Vec3(x / s, y / s, z / s); }
+
+    __host__ __device__ Vec3& operator+=(const Vec3& o) { x += o.x; y += o.y; z += o.z; return *this; }
+    __host__ __device__ Vec3& operator-=(const Vec3& o) { x -= o.x; y -= o.y; z -= o.z; return *this; }
+    __host__ __device__ Vec3& operator*=(double s) { x *= s; y *= s; z *= s; return *this; }
+
+    __host__ __device__ double norm() const { return sqrt(x*x + y*y + z*z); }
+    __host__ __device__ Vec3 normalized() const {
+        double n = norm();
+        return n > 0 ? Vec3(x/n, y/n, z/n) : Vec3(0,0,0);
+    }
+    __host__ __device__ double dot(const Vec3& o) const { return x*o.x + y*o.y + z*o.z; }
+};
+
+struct Body {
+    Vec3 position;
+    Vec3 velocity;
+    Vec3 force;
+    double mass;
+};
+
+void generateBodies(int N, vector<Body>& bodies,
+                    double mass_min, double mass_max,
+                    double pos_min, double pos_max,
+                    double vel_min, double vel_max) {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<double> massDist(mass_min, mass_max);
+    std::uniform_real_distribution<double> posDist(pos_min, pos_max);
+    std::uniform_real_distribution<double> velDist(vel_min, vel_max);
+
+    bodies.clear();
+    bodies.reserve(N);
+
+    for (int i = 0; i < N; i++) {
+        Body b;
+        b.mass = massDist(gen);
+        b.position = Vec3(posDist(gen), posDist(gen), posDist(gen));
+        b.velocity = Vec3(velDist(gen), velDist(gen), velDist(gen));
+        b.force = Vec3(0,0,0);
+        bodies.push_back(b);
+    }
+}
+
+inline void checkCuda(cudaError_t result, const char* file, int line) {
+    if (result != cudaSuccess) {
+        cerr << "CUDA Error: " << cudaGetErrorString(result) << " at "
+             << file << ":" << line << endl;
+        exit(EXIT_FAILURE);
+    }
+}
+#define CHECK_CUDA(call) checkCuda(call, __FILE__, __LINE__)
+
+__global__ void computeForcesKernel(Vec3* positions, Vec3* forces, double* masses, int N) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < N) {
+        Vec3 force(0, 0, 0);
+        Vec3 pos_i = positions[i];
+        for (int j = 0; j < N; j++) {
+            if (i != j) {
+                Vec3 diff = positions[j] - pos_i;
+                double dist = diff.norm() + 1e-10;
+                double forceMag = G * masses[i] * masses[j] / (dist * dist);
+                force += diff.normalized() * forceMag;
+            }
+        }
+        forces[i] = force;
+    }
+}
+
+__global__ void updatePositionsVelocitiesKernel(Vec3* positions, Vec3* velocities,
+                                               Vec3* forces, double* masses, double dt, int N) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < N) {
+        Vec3 acceleration = forces[i] / masses[i];
+        velocities[i] += acceleration * dt;
+        positions[i] += velocities[i] * dt;
+    }
+}
+
+void handleInelasticCollisions(vector<Body>& bodies, double radius, double e) {
+    int N = bodies.size();
+    for(int i=0; i<N; i++) {
+        for(int j=i+1; j<N; j++) {
+            Vec3 diff = bodies[j].position - bodies[i].position;
+            double dist = diff.norm();
+            if(dist < 2*radius) {
+                Vec3 n_hat = diff.normalized();
+                Vec3 v1 = bodies[i].velocity;
+                Vec3 v2 = bodies[j].velocity;
+                double m1 = bodies[i].mass;
+                double m2 = bodies[j].mass;
+
+                double v1_n = v1.dot(n_hat);
+                double v2_n = v2.dot(n_hat);
+
+                double v1_n_new = (m1 * v1_n + m2 * v2_n - m2 * e * (v1_n - v2_n)) / (m1 + m2);
+                double v2_n_new = (m1 * v1_n + m2 * v2_n + m1 * e * (v1_n - v2_n)) / (m1 + m2);
+
+                Vec3 v1_new = v1 + n_hat * (v1_n_new - v1_n);
+                Vec3 v2_new = v2 + n_hat * (v2_n_new - v2_n);
+
+                bodies[i].velocity = v1_new;
+                bodies[j].velocity = v2_new;
+
+                double overlap = 2*radius - dist;
+                bodies[i].position -= n_hat * (overlap / 2);
+                bodies[j].position += n_hat * (overlap / 2);
+            }
+        }
+    }
+}
+
+void nbodyStepGPU(vector<Body>& bodies, double dt, double radius, double e) {
+    int N = bodies.size();
+    Vec3 *d_positions, *d_velocities, *d_forces;
+    double *d_masses;
+
+    CHECK_CUDA(cudaMalloc(&d_positions, N * sizeof(Vec3)));
+    CHECK_CUDA(cudaMalloc(&d_velocities, N * sizeof(Vec3)));
+    CHECK_CUDA(cudaMalloc(&d_forces, N * sizeof(Vec3)));
+    CHECK_CUDA(cudaMalloc(&d_masses, N * sizeof(double)));
+
+    vector<Vec3> h_positions(N);
+    vector<Vec3> h_velocities(N);
+    vector<double> h_masses(N);
+
+    for (int i = 0; i < N; i++) {
+        h_positions[i] = bodies[i].position;
+        h_velocities[i] = bodies[i].velocity;
+        h_masses[i] = bodies[i].mass;
+    }
+
+    CHECK_CUDA(cudaMemcpy(d_positions, h_positions.data(), N * sizeof(Vec3), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_velocities, h_velocities.data(), N * sizeof(Vec3), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_masses, h_masses.data(), N * sizeof(double), cudaMemcpyHostToDevice));
+
+    int blockSize = 256;
+    int numBlocks = (N + blockSize - 1) / blockSize;
+
+    computeForcesKernel<<<numBlocks, blockSize>>>(d_positions, d_forces, d_masses, N);
+    CHECK_CUDA(cudaGetLastError());
+    CHECK_CUDA(cudaDeviceSynchronize());
+
+    updatePositionsVelocitiesKernel<<<numBlocks, blockSize>>>(d_positions, d_velocities, d_forces, d_masses, dt, N);
+    CHECK_CUDA(cudaGetLastError());
+    CHECK_CUDA(cudaDeviceSynchronize());
+
+    CHECK_CUDA(cudaMemcpy(h_positions.data(), d_positions, N * sizeof(Vec3), cudaMemcpyDeviceToHost));
+    CHECK_CUDA(cudaMemcpy(h_velocities.data(), d_velocities, N * sizeof(Vec3), cudaMemcpyDeviceToHost));
+    for (int i = 0; i < N; i++) {
+        bodies[i].position = h_positions[i];
+        bodies[i].velocity = h_velocities[i];
+    }
+
+    handleInelasticCollisions(bodies, radius, e);
+
+    CHECK_CUDA(cudaFree(d_positions));
+    CHECK_CUDA(cudaFree(d_velocities));
+    CHECK_CUDA(cudaFree(d_forces));
+    CHECK_CUDA(cudaFree(d_masses));
+}
+
+
+bool writeBodiesToHDF5(const std::string& filename, const std::vector<Body>& bodies) {
+    try {
+        H5File file(filename, H5F_ACC_TRUNC);
+
+        hsize_t N = bodies.size();
+        hsize_t dims[2] = {N, 3};
+
+        // Positions dataset
+        DataSpace dataspace(2, dims);
+        DataSet dataset_pos = file.createDataSet("/positions", PredType::NATIVE_DOUBLE, dataspace);
+        std::vector<double> pos_data(N * 3);
+        for (hsize_t i = 0; i < N; ++i) {
+            pos_data[3 * i] = bodies[i].position.x;
+            pos_data[3 * i + 1] = bodies[i].position.y;
+            pos_data[3 * i + 2] = bodies[i].position.z;
+        }
+        dataset_pos.write(pos_data.data(), PredType::NATIVE_DOUBLE);
+
+        // Velocities dataset
+        DataSet dataset_vel = file.createDataSet("/velocities", PredType::NATIVE_DOUBLE, dataspace);
+        std::vector<double> vel_data(N * 3);
+        for (hsize_t i = 0; i < N; ++i) {
+            vel_data[3 * i] = bodies[i].velocity.x;
+            vel_data[3 * i + 1] = bodies[i].velocity.y;
+            vel_data[3 * i + 2] = bodies[i].velocity.z;
+        }
+        dataset_vel.write(vel_data.data(), PredType::NATIVE_DOUBLE);
+
+        // Masses dataset (1D)
+        hsize_t dims_mass[1] = {N};
+        DataSpace mass_space(1, dims_mass);
+        DataSet dataset_mass = file.createDataSet("/masses", PredType::NATIVE_DOUBLE, mass_space);
+        std::vector<double> mass_data(N);
+        for (hsize_t i = 0; i < N; ++i) {
+            mass_data[i] = bodies[i].mass;
+        }
+        dataset_mass.write(mass_data.data(), PredType::NATIVE_DOUBLE);
+
+        return true;
+    } catch (FileIException& e) {
+        e.printErrorStack();
+        return false;
+    } catch (DataSetIException& e) {
+        e.printErrorStack();
+        return false;
+    } catch (DataSpaceIException& e) {
+        e.printErrorStack();
+        return false;
+    }
+}
+bool writeAllStepsToHDF5(const std::string& filename, const std::vector<std::vector<Body>>& allSteps) {
+    try {
+        H5File file(filename, H5F_ACC_TRUNC);
+
+        size_t numSteps = allSteps.size();
+        size_t N = allSteps[0].size();
+        Group stepGroup = file.createGroup("/steps");
+
+        for (size_t step = 0; step < numSteps; step++) {
+            std::ostringstream stepName;
+            stepName << "step_" << std::setfill('0') << std::setw(3) << step;
+            Group currentStep = stepGroup.createGroup(stepName.str());
+
+            hsize_t dims[2] = {N, 3};
+
+            // Positions dataset for this step
+            DataSpace dataspace(2, dims);
+            DataSet dataset_pos = currentStep.createDataSet("positions", PredType::NATIVE_DOUBLE, dataspace);
+            std::vector<double> pos_data(N * 3);
+            for (hsize_t i = 0; i < N; ++i) {
+                pos_data[3 * i] = allSteps[step][i].position.x;
+                pos_data[3 * i + 1] = allSteps[step][i].position.y;
+                pos_data[3 * i + 2] = allSteps[step][i].position.z;
+            }
+            dataset_pos.write(pos_data.data(), PredType::NATIVE_DOUBLE);
+
+            // Velocities dataset for this step
+            DataSet dataset_vel = currentStep.createDataSet("velocities", PredType::NATIVE_DOUBLE, dataspace);
+            std::vector<double> vel_data(N * 3);
+            for (hsize_t i = 0; i < N; ++i) {
+                vel_data[3 * i] = allSteps[step][i].velocity.x;
+                vel_data[3 * i + 1] = allSteps[step][i].velocity.y;
+                vel_data[3 * i + 2] = allSteps[step][i].velocity.z;
+            }
+            dataset_vel.write(vel_data.data(), PredType::NATIVE_DOUBLE);
+
+            // Masses dataset for this step (1D)
+            hsize_t dims_mass[1] = {N};
+            DataSpace mass_space(1, dims_mass);
+            DataSet dataset_mass = currentStep.createDataSet("masses", PredType::NATIVE_DOUBLE, mass_space);
+            std::vector<double> mass_data(N);
+            for (hsize_t i = 0; i < N; ++i) {
+                mass_data[i] = allSteps[step][i].mass;
+            }
+            dataset_mass.write(mass_data.data(), PredType::NATIVE_DOUBLE);
+        }
+
+        // Save simulation info
+        Group infoGroup = file.createGroup("/info");
+
+        hsize_t scalar_dims[1] = {1};
+        DataSpace scalar_space(1, scalar_dims);
+
+        DataSet dataset_numSteps = infoGroup.createDataSet("num_steps", PredType::NATIVE_INT, scalar_space);
+        int numStepsInt = static_cast<int>(numSteps);
+        dataset_numSteps.write(&numStepsInt, PredType::NATIVE_INT);
+
+        DataSet dataset_numParticles = infoGroup.createDataSet("num_particles", PredType::NATIVE_INT, scalar_space);
+        int numParticlesInt = static_cast<int>(N);
+        dataset_numParticles.write(&numParticlesInt, PredType::NATIVE_INT);
+
+        return true;
+    } catch (FileIException& e) {
+        e.printErrorStack();
+        return false;
+    } catch (DataSetIException& e) {
+        e.printErrorStack();
+        return false;
+    } catch (DataSpaceIException& e) {
+        e.printErrorStack();
+        return false;
+    }
+}
+
+
+int main(int argc, char* argv[]) {
+    int N = 15;
+    int steps = 300;
+    double dt = 1e6;
+    double radius = 2e9;
+    double e = 0.7;
+    std::string output_dir = "output";
+    std::string output_filename = "all_steps_gpu.h5";
+
+    if (argc > 1) N = std::atoi(argv[1]);
+    if (argc > 2) steps = std::atoi(argv[2]);
+    if (argc > 3) output_dir = argv[3];
+    if (argc > 4) output_filename = argv[4];
+
+    try {
+        if (!fs::exists(output_dir)) {
+            fs::create_directories(output_dir);
+            std::cout << "Output directory created: " << output_dir << std::endl;
+        }
+    } catch (const fs::filesystem_error& e) {
+        std::cerr << "Error occur when creating output directory: " << e.what() << std::endl;
+        return 1;
+    }
+    std::string full_output_path = output_dir + "/" + output_filename;
+    int deviceCount = 0;
+    cudaGetDeviceCount(&deviceCount);
+    if (deviceCount == 0) {
+        std::cerr << "CUDA not found" << std::endl;
+        return 1;
+    }
+
+    cudaDeviceProp deviceProp;
+    cudaGetDeviceProperties(&deviceProp, 0);
+    std::cout << "Used GPU: " << deviceProp.name << std::endl;
+    std::cout << "CUDA Prop: " << deviceProp.major << "." << deviceProp.minor << std::endl;
+    std::cout << "Total Memory: " << deviceProp.totalGlobalMem / (1024*1024) << " MB" << std::endl;
+
+    std::vector<Body> bodies;
+    generateBodies(N, bodies, 1e20, 1e25, -1e11, 1e11, -1e3, 1e3);
+
+    std::vector<std::vector<Body>> allSteps;
+    allSteps.push_back(bodies);
+
+    auto start = std::chrono::high_resolution_clock::now();
+    std::cout << "Simulation Starting: " << N << " particles, " << steps << " steps (GPU)...\n";
+
+    for (int step = 0; step < steps; ++step) {
+        nbodyStepGPU(bodies, dt, radius, e);
+        allSteps.push_back(bodies);
+
+        if ((step+1) % 10 == 0 || step == steps-1) {
+            std::cout << "Progress: " << step+1 << "/" << steps << " (%"
+                      << std::fixed << std::setprecision(1) << (step+1)*100.0/steps << ")\n";
+        }
+    }
+
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end - start;
+    std::cout << "All steps are calculated. Saving to HDF5 file.\n";
+
+    if (!writeAllStepsToHDF5(full_output_path, allSteps)) {
+        std::cerr << "An error occurred when saving results.\n";
+        return 1;
+    }
+
+    std::cout << "Process completed! Total time: " << elapsed_seconds.count() << " seconds\n";
+    std::cout << "Results saved to " << full_output_path << " file \n";
+    std::cout << "GPU acceleration used for computation.\n";
+
+    return 0;
+}
