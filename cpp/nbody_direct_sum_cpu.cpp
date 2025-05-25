@@ -250,8 +250,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    std::cout << "========\n";
     std::cout << "Process completed! Total time: " << elapsed_seconds.count() << " seconds\n";
     std::cout << "Results saved to " << output_file << " file\n";
+    std::cout << "========\n";
 
     return 0;
 }

@@ -2,7 +2,7 @@
 
 An N-body simulation is a computational method used to study the dynamic evolution of a system of N interacting particles,
 where each particle's motion is influenced by the forces from all other particles—typically under gravity. 
-In this project, we implement a GPU-accelerated N-body simulation that models the positions, velocities, 
+In this project, I implement a GPU-accelerated N-body simulation that models the positions, velocities, 
 and gravitational interactions of multiple bodies in three-dimensional space.
 The simulation calculates the gravitational forces between all particles at each time step, updates their positions 
 and velocities accordingly, and handles inelastic collisions. Simulation results are periodically saved to HDF5 files 
@@ -53,7 +53,7 @@ gprof ./nbody_cpu gmon.out > cpu_profile.txt
 
 To profile the GPU code, you can use `ncu`:
 ```bash
-ncu --target-processes all ./nbody_gpu /media/N100_step300.h5 100 300
+ncu --set full --target-processes all ./nbody_gpu /media/gpu-output/N200_step1000.h5 200 1000
 ```
 
 
