@@ -8,3 +8,11 @@ The simulation calculates the gravitational forces between all particles at each
 and velocities accordingly, and handles inelastic collisions. Simulation results are periodically saved to HDF5 files 
 for further analysis and visualization.
 
+## Installation
+
+To run gpu code:
+
+```bash
+sudo apt-get install libhdf5-dev
+nvcc -o nbody_gpu nbody_direct_sum_gpu.cpp -lhdf5_cpp -lhdf5
+```
