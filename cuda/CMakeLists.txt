@@ -7,9 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
 # Main source
-set(SOURCES
-    cuda/nbody_direct_sum_gpu.cpp
-)
+set(SOURCES nbody_direct_sum_gpu.cu)
+
 
 find_package(HDF5 COMPONENTS CXX REQUIRED)
 find_package(CUDAToolkit REQUIRED)

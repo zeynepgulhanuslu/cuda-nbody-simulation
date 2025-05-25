@@ -14,5 +14,5 @@ To run gpu code:
 
 ```bash
 sudo apt-get install libhdf5-dev
-nvcc -o nbody_gpu nbody_direct_sum_gpu.cpp -lhdf5_cpp -lhdf5
+nvcc -o nbody_gpu nbody_direct_sum_gpu.cu -lhdf5_cpp -lhdf5
 ```
