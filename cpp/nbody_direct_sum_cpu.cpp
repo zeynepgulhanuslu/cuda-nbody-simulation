@@ -66,7 +66,7 @@ void generateBodies(int N, vector<Body>& bodies,
 
 void computeForces(vector<Body>& bodies) {
     int N = bodies.size();
-   
+
     for(auto& b : bodies) {
         b.force = {0,0,0};
     }
@@ -125,71 +125,22 @@ void nbodyStep(vector<Body>& bodies, double dt, double radius, double e) {
     }
     handleInelasticCollisions(bodies, radius, e);
 }
-bool writeBodiesToHDF5(const std::string& filename, const std::vector<Body>& bodies) {
-    try {
-        H5File file(filename, H5F_ACC_TRUNC);
 
-        hsize_t N = bodies.size();
-        hsize_t dims[2] = {N, 3};
-
-        // Positions dataset
-        DataSpace dataspace(2, dims);
-        DataSet dataset_pos = file.createDataSet("/positions", PredType::NATIVE_DOUBLE, dataspace);
-        std::vector<double> pos_data(N * 3);
-        for (hsize_t i = 0; i < N; ++i) {
-            pos_data[3 * i] = bodies[i].position.x;
-            pos_data[3 * i + 1] = bodies[i].position.y;
-            pos_data[3 * i + 2] = bodies[i].position.z;
-        }
-        dataset_pos.write(pos_data.data(), PredType::NATIVE_DOUBLE);
-
-        // Velocities dataset
-        DataSet dataset_vel = file.createDataSet("/velocities", PredType::NATIVE_DOUBLE, dataspace);
-        std::vector<double> vel_data(N * 3);
-        for (hsize_t i = 0; i < N; ++i) {
-            vel_data[3 * i] = bodies[i].velocity.x;
-            vel_data[3 * i + 1] = bodies[i].velocity.y;
-            vel_data[3 * i + 2] = bodies[i].velocity.z;
-        }
-        dataset_vel.write(vel_data.data(), PredType::NATIVE_DOUBLE);
-
-        // Masses dataset (1D)
-        hsize_t dims_mass[1] = {N};
-        DataSpace mass_space(1, dims_mass);
-        DataSet dataset_mass = file.createDataSet("/masses", PredType::NATIVE_DOUBLE, mass_space);
-        std::vector<double> mass_data(N);
-        for (hsize_t i = 0; i < N; ++i) {
-            mass_data[i] = bodies[i].mass;
-        }
-        dataset_mass.write(mass_data.data(), PredType::NATIVE_DOUBLE);
-
-        return true;
-    } catch (FileIException& e) {
-        e.printErrorStack();
-        return false;
-    } catch (DataSetIException& e) {
-        e.printErrorStack();
-        return false;
-    } catch (DataSpaceIException& e) {
-        e.printErrorStack();
-        return false;
-    }
-}
 bool writeAllStepsToHDF5(const std::string& filename, const std::vector<std::vector<Body>>& allSteps) {
     try {
         H5File file(filename, H5F_ACC_TRUNC);
-        
+
         size_t numSteps = allSteps.size();
         size_t N = allSteps[0].size();
         Group stepGroup = file.createGroup("/steps");
-        
+
         for (size_t step = 0; step < numSteps; step++) {
             std::ostringstream stepName;
             stepName << "step_" << std::setfill('0') << std::setw(3) << step;
             Group currentStep = stepGroup.createGroup(stepName.str());
-            
+
             hsize_t dims[2] = {N, 3};
-            
+
             // Positions dataset for this step
             DataSpace dataspace(2, dims);
             DataSet dataset_pos = currentStep.createDataSet("positions", PredType::NATIVE_DOUBLE, dataspace);
@@ -200,7 +151,7 @@ bool writeAllStepsToHDF5(const std::string& filename, const std::vector<std::vec
                 pos_data[3 * i + 2] = allSteps[step][i].position.z;
             }
             dataset_pos.write(pos_data.data(), PredType::NATIVE_DOUBLE);
-            
+
             // Velocities dataset for this step
             DataSet dataset_vel = currentStep.createDataSet("velocities", PredType::NATIVE_DOUBLE, dataspace);
             std::vector<double> vel_data(N * 3);
@@ -210,7 +161,7 @@ bool writeAllStepsToHDF5(const std::string& filename, const std::vector<std::vec
                 vel_data[3 * i + 2] = allSteps[step][i].velocity.z;
             }
             dataset_vel.write(vel_data.data(), PredType::NATIVE_DOUBLE);
-            
+
             // Masses dataset for this step (1D)
             hsize_t dims_mass[1] = {N};
             DataSpace mass_space(1, dims_mass);
@@ -221,21 +172,21 @@ bool writeAllStepsToHDF5(const std::string& filename, const std::vector<std::vec
             }
             dataset_mass.write(mass_data.data(), PredType::NATIVE_DOUBLE);
         }
-        
+
         // Save simulation info
         Group infoGroup = file.createGroup("/info");
-        
+
         hsize_t scalar_dims[1] = {1};
         DataSpace scalar_space(1, scalar_dims);
-        
+
         DataSet dataset_numSteps = infoGroup.createDataSet("num_steps", PredType::NATIVE_INT, scalar_space);
         int numStepsInt = static_cast<int>(numSteps);
         dataset_numSteps.write(&numStepsInt, PredType::NATIVE_INT);
-        
+
         DataSet dataset_numParticles = infoGroup.createDataSet("num_particles", PredType::NATIVE_INT, scalar_space);
         int numParticlesInt = static_cast<int>(N);
         dataset_numParticles.write(&numParticlesInt, PredType::NATIVE_INT);
-        
+
         return true;
     } catch (FileIException& e) {
         e.printErrorStack();
@@ -249,64 +200,58 @@ bool writeAllStepsToHDF5(const std::string& filename, const std::vector<std::vec
     }
 }
 
-
 int main(int argc, char* argv[]) {
     int N = 15;
     int steps = 300;
     double dt = 1e6;
     double radius = 2e9;
     double e = 0.7;
-    std::string output_dir = "output";
-    std::string output_filename = "all_steps.h5";
-    int save_interval = 10;
-    if (argc > 1) N = std::atoi(argv[1]);
-    if (argc > 2) steps = std::atoi(argv[2]);
-    if (argc > 3) output_dir = argv[3];
-    if (argc > 4) output_filename = argv[4];
 
-    try {
-        if (!fs::exists(output_dir)) {
-            fs::create_directories(output_dir);
-            std::cout << "Output directory: " << output_dir << std::endl;
-        }
-    } catch (const fs::filesystem_error& e) {
-        std::cerr << "An error occur when creating output directory: " << e.what() << std::endl;
+    if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " output_file [N steps]" << std::endl;
         return 1;
     }
-    std::string full_output_path = output_dir + "/" + output_filename;
+    std::string output_file = argv[1];
+    if (argc > 2) N = std::atoi(argv[2]);
+    if (argc > 3) steps = std::atoi(argv[3]);
+
+    // create directory if needed
+    fs::path out_path(output_file);
+    if (!out_path.parent_path().empty()) {
+        try {
+            fs::create_directories(out_path.parent_path());
+        } catch (const fs::filesystem_error& e) {
+            std::cerr << "Error occur when creating output directory: " << e.what() << std::endl;
+            return 1;
+        }
+    }
 
     std::vector<Body> bodies;
     generateBodies(N, bodies, 1e20, 1e25, -1e11, 1e11, -1e3, 1e3);
     std::vector<std::vector<Body>> allSteps;
-        
-
     allSteps.push_back(bodies);
     auto start = std::chrono::high_resolution_clock::now();
 
-    
     for (int step = 0; step < steps; ++step) {
         nbodyStep(bodies, dt, radius, e);
-
         allSteps.push_back(bodies);
-        if ((step+1) % save_interval == 0 || step == steps-1) {
+        if ((step+1) % 10 == 0 || step == steps-1) {
             std::cout << "Progress: " << step+1 << "/" << steps << " (%"
                       << std::fixed << std::setprecision(1) << (step+1)*100.0/steps << ")\n";
         }
     }
 
-
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed_seconds = end - start;
-    std::cout << "All steps are calculated.Saving to HDF5 file.\n";
+    std::cout << "All steps are calculated. Saving to HDF5 file.\n";
 
-    // Save all steps into matrix (N×M size matrix)
-    if (!writeAllStepsToHDF5(full_output_path, allSteps)) {
-        std::cerr << "An error occur when saving results.\n";
+    if (!writeAllStepsToHDF5(output_file, allSteps)) {
+        std::cerr << "An error occurred when saving results.\n";
         return 1;
     }
 
     std::cout << "Process completed! Total time: " << elapsed_seconds.count() << " seconds\n";
-    std::cout << "Results saved to " << full_output_path << " file \n";
+    std::cout << "Results saved to " << output_file << " file\n";
 
     return 0;
 }

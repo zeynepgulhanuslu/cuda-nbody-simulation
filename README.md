@@ -43,4 +43,17 @@ To run the GPU simulation, execute the following command:
 ./nbody_gpu -n <number_of_bodies> -t <simulation_time> -dt <time_step> -o <output_file>
 ```
 
+## Profiling for CPU and GPU
+
+To profile the CPU code, you can use `gprof`:'
+```bash
+gprof ./nbody_cpu gmon.out > cpu_profile.txt
+```
+
+
+To profile the GPU code, you can use `ncu`:
+```bash
+ncu --target-processes all ./nbody_gpu 100 300 /media/N100_step300.h5
+```
+
 
