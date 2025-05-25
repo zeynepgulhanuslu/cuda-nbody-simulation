@@ -56,4 +56,14 @@ To profile the GPU code, you can use `ncu`:
 ncu --set full --target-processes all ./nbody_gpu /media/gpu-output/N200_step1000.h5 200 1000
 ```
 
+Run multiple simulations using a bash script:
+```bash
+cd cpu/build 
+bash ../../cpu_direct_sum_profiling.sh cpu-results
+```
+
+```bash
+cd cuda/build 
+bash ../../gpu_direct_sum_profiling.sh gpu-results
+```
 
