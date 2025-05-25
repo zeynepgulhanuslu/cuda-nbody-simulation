@@ -5,7 +5,7 @@ from matplotlib.animation import FuncAnimation
 r1, r2 = 0.1, 0.1
 pos1 = np.array([0.0, 0.0])
 pos2 = np.array([1.5, 0.0])
-vel1 = np.array([1.0, 0.1])   # Mavi cisme küçük y bileşeni
+vel1 = np.array([1.0, 0.1])
 vel2 = np.array([-0.5, 0.0])
 m1 = 1.5
 m2 = 1.0
@@ -21,11 +21,9 @@ def elastic_collision_2d(m1, m2, v1, v2, x1, x2):
     v1_n = np.dot(v1, n_hat)
     v2_n = np.dot(v2, n_hat)
 
-    # Elastik çarpışma hız formülleri
     v1_n_new = (v1_n * (m1 - m2) + 2 * m2 * v2_n) / (m1 + m2)
     v2_n_new = (v2_n * (m2 - m1) + 2 * m1 * v1_n) / (m1 + m2)
 
-    # Hız vektörlerini güncelle
     v1_new = v1 + (v1_n_new - v1_n) * n_hat
     v2_new = v2 + (v2_n_new - v2_n) * n_hat
 
@@ -67,5 +65,5 @@ def update(frame):
 
 
 ani = FuncAnimation(fig, update, frames=800, interval=10, blit=True)
-plt.title("2D Tam Elastik Çarpışma Simülasyonu")
+plt.title("2D Elastic Collision Simulation")
 plt.show()

@@ -1,0 +1,6 @@
+loguru
+matplotlib
+numpy
+pandas
+click
+pillow
