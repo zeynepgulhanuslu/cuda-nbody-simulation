@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
+#include <thread>
 
 namespace fs = std::filesystem;
 using namespace H5;
@@ -169,7 +170,7 @@ void nbodyStepGPU(vector<Body>& bodies, double dt, double radius, double e) {
     computeForcesKernel<<<numBlocks, blockSize>>>(d_positions, d_forces, d_masses, N);
     CHECK_CUDA(cudaGetLastError());
     CHECK_CUDA(cudaDeviceSynchronize());
-    std::this_thread::sleep_for(std::chrono::seconds(2)); // Profiling için beklet
+    std::this_thread::sleep_for(std::chrono::seconds(2));
 
     updatePositionsVelocitiesKernel<<<numBlocks, blockSize>>>(d_positions, d_velocities, d_forces, d_masses, dt, N);
     CHECK_CUDA(cudaGetLastError());
