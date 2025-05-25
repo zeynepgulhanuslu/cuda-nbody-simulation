@@ -169,10 +169,12 @@ void nbodyStepGPU(vector<Body>& bodies, double dt, double radius, double e) {
     computeForcesKernel<<<numBlocks, blockSize>>>(d_positions, d_forces, d_masses, N);
     CHECK_CUDA(cudaGetLastError());
     CHECK_CUDA(cudaDeviceSynchronize());
+    std::this_thread::sleep_for(std::chrono::seconds(2)); // Profiling için beklet
 
     updatePositionsVelocitiesKernel<<<numBlocks, blockSize>>>(d_positions, d_velocities, d_forces, d_masses, dt, N);
     CHECK_CUDA(cudaGetLastError());
     CHECK_CUDA(cudaDeviceSynchronize());
+
 
     CHECK_CUDA(cudaMemcpy(h_positions.data(), d_positions, N * sizeof(Vec3), cudaMemcpyDeviceToHost));
     CHECK_CUDA(cudaMemcpy(h_velocities.data(), d_velocities, N * sizeof(Vec3), cudaMemcpyDeviceToHost));

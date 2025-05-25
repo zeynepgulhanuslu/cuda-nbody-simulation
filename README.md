@@ -16,8 +16,7 @@ To run the CPU code:
 
 ```bash
 cd cpu
-mkdir build
-cd build
+mkdir build && cd build
 cmake ..
 make -j4
 ```
@@ -25,8 +24,7 @@ To run gpu code:
 
 ```bash
 sudo apt-get install libhdf5-dev
-cd cuda
-mkdir build
+mkdir build && cd build
 cd build
 cmake ..
 make -j4
