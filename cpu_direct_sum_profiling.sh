@@ -10,7 +10,7 @@ mkdir -p "$OUTDIR"
 
 N_LIST=(200 300 500 1000 2000 100000 500000)
 STEPS_LIST=(1000 2000 3000 5000)
-RESULT_FILE="${OUTDIR}/all_result.txt"
+RESULT_FILE="${OUTDIR}/all_result.csv"
 : > "$RESULT_FILE"
 
 for N in "${N_LIST[@]}"; do
@@ -22,7 +22,7 @@ for N in "${N_LIST[@]}"; do
         run_output=$(./nbody_cpu "$OUTFILE" "$N" "$STEPS")
         total_time=$(echo "$run_output" | grep "Process completed! Total time:" | awk '{print $(NF-1)}')
 
-        echo "N=$N, Step=$STEPS, total_time=$total_time" | tee -a "$RESULT_FILE"
+        echo "$N,$STEPS,$total_time" >> "$RESULT_FILE"
         gprof ./nbody_cpu gmon.out > "$PROFILE_OUT"
         rm -f gmon.out
     done
