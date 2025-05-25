@@ -2,9 +2,9 @@
 *.mp4
 .vscode
 cpu_sim
-cpp/build
+cpu/build
 *.h5
-cpp/results
+cpu/results
 __pycache__/
 *.py[cod]
 *$py.class
