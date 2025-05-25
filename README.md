@@ -34,13 +34,13 @@ make -j4
 To run the CPU simulation, execute the following command:
 
 ```bash
-./nbody_cpu -n <number_of_bodies> -t <simulation_time> -dt <time_step> -o <output_file>
+./nbody_cpu output_file number_of_bodies steps
 ```
 
 To run the GPU simulation, execute the following command:
 
 ```bash
-./nbody_gpu -n <number_of_bodies> -t <simulation_time> -dt <time_step> -o <output_file>
+./nbody_gpu output_file number_of_bodies steps
 ```
 
 ## Profiling for CPU and GPU
@@ -53,7 +53,7 @@ gprof ./nbody_cpu gmon.out > cpu_profile.txt
 
 To profile the GPU code, you can use `ncu`:
 ```bash
-ncu --target-processes all ./nbody_gpu 100 300 /media/N100_step300.h5
+ncu --target-processes all ./nbody_gpu /media/N100_step300.h5 100 300
 ```
 
 
